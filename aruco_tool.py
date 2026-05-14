@@ -24,7 +24,70 @@ def generate_marker(marker_id, size=200, output_path="marker.png", dict_type=aru
     cv2.imwrite(output_path, marker_image)
     print(f"Marker ID {marker_id} generated and saved to {output_path}")
 
-def detect_image(image_path, dict_type=aruco.DICT_6X6_250, headless=False):
+def draw_cube(image, rvec, tvec, camera_matrix, dist_coeffs, marker_length):
+    """
+    Draw a 3D cube on top of an ArUco marker.
+    """
+    half_l = marker_length / 2.0
+    # Define the 3D coordinates of the cube vertices
+    # Marker is in the XY plane (Z=0), cube extends in positive Z direction
+    axis = np.float32([
+        [-half_l,  half_l, 0],
+        [ half_l,  half_l, 0],
+        [ half_l, -half_l, 0],
+        [-half_l, -half_l, 0],
+        [-half_l,  half_l, marker_length],
+        [ half_l,  half_l, marker_length],
+        [ half_l, -half_l, marker_length],
+        [-half_l, -half_l, marker_length]
+    ])
+
+    # Project the 3D points to 2D image plane
+    imgpts, _ = cv2.projectPoints(axis, rvec, tvec, camera_matrix, dist_coeffs)
+    imgpts = np.int32(imgpts).reshape(-1, 2)
+
+    # Draw the base (green)
+    cv2.drawContours(image, [imgpts[:4]], -1, (0, 255, 0), 3)
+    
+    # Draw the pillars (blue)
+    for i, j in zip(range(4), range(4, 8)):
+        cv2.line(image, tuple(imgpts[i]), tuple(imgpts[j]), (255, 0, 0), 3)
+        
+    # Draw the top (red)
+    cv2.drawContours(image, [imgpts[4:]], -1, (0, 0, 255), 3)
+
+    return image
+
+def process_ar(image, corners, marker_length=0.05):
+    """
+    Estimate pose and draw a 3D cube for each detected marker.
+    Uses a default camera matrix based on image size.
+    """
+    h, w = image.shape[:2]
+    focal_length = w
+    center = (w / 2, h / 2)
+    camera_matrix = np.array([
+        [focal_length, 0, center[0]],
+        [0, focal_length, center[1]],
+        [0, 0, 1]
+    ], dtype=np.float32)
+    dist_coeffs = np.zeros((4, 1))
+
+    half_l = marker_length / 2.0
+    # Marker object points (top-left, top-right, bottom-right, bottom-left)
+    obj_points = np.array([
+        [-half_l,  half_l, 0],
+        [ half_l,  half_l, 0],
+        [ half_l, -half_l, 0],
+        [-half_l, -half_l, 0]
+    ], dtype=np.float32)
+
+    for i in range(len(corners)):
+        success, rvec, tvec = cv2.solvePnP(obj_points, corners[i][0], camera_matrix, dist_coeffs)
+        if success:
+            draw_cube(image, rvec, tvec, camera_matrix, dist_coeffs, marker_length)
+
+def detect_image(image_path, dict_type=aruco.DICT_6X6_250, headless=False, apply_ar=False):
     """
     Detect ArUco markers in a static image.
     """
@@ -48,6 +111,9 @@ def detect_image(image_path, dict_type=aruco.DICT_6X6_250, headless=False):
         # Draw detected markers on the image
         aruco.drawDetectedMarkers(image, corners, ids)
         
+        if apply_ar:
+            process_ar(image, corners)
+        
         output_file = "detected_" + os.path.basename(image_path)
         cv2.imwrite(output_file, image)
         print(f"Saved detection result to {output_file}")
@@ -60,7 +126,7 @@ def detect_image(image_path, dict_type=aruco.DICT_6X6_250, headless=False):
     else:
         print("No ArUco markers detected in the image.")
 
-def detect_webcam(dict_type=aruco.DICT_6X6_250, camera_index=0):
+def detect_webcam(dict_type=aruco.DICT_6X6_250, camera_index=0, apply_ar=False):
     """
     Detect ArUco markers using a webcam feed.
     """
@@ -84,6 +150,8 @@ def detect_webcam(dict_type=aruco.DICT_6X6_250, camera_index=0):
         
         if ids is not None:
             aruco.drawDetectedMarkers(frame, corners, ids)
+            if apply_ar:
+                process_ar(frame, corners)
             
         cv2.imshow('ArUco Detection (Webcam)', frame)
         
@@ -107,10 +175,12 @@ def main():
     parser_det_img = subparsers.add_parser("detect-img", help="Detect ArUco markers in an image")
     parser_det_img.add_argument("image", type=str, help="Path to the image file")
     parser_det_img.add_argument("--headless", action="store_true", help="Do not display the image window")
+    parser_det_img.add_argument("--ar", action="store_true", help="Overlay a 3D cube (Augmented Reality)")
     
     # Subparser for detecting from a webcam
     parser_det_webcam = subparsers.add_parser("detect-webcam", help="Detect ArUco markers using the webcam")
     parser_det_webcam.add_argument("--camera", type=int, default=0, help="Camera index (default: 0)")
+    parser_det_webcam.add_argument("--ar", action="store_true", help="Overlay a 3D cube (Augmented Reality)")
 
     args = parser.parse_args()
 
@@ -120,9 +190,9 @@ def main():
     if args.command == "generate":
         generate_marker(args.id, args.size, args.out, dict_type)
     elif args.command == "detect-img":
-        detect_image(args.image, dict_type, args.headless)
+        detect_image(args.image, dict_type, args.headless, args.ar)
     elif args.command == "detect-webcam":
-        detect_webcam(dict_type, args.camera)
+        detect_webcam(dict_type, args.camera, args.ar)
     else:
         parser.print_help()
 

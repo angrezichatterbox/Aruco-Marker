@@ -37,6 +37,7 @@ python aruco_tool.py detect-img marker.png
 Options:
 - `image`: The path to the image you want to scan for ArUco markers.
 - `--headless`: Run without attempting to open an image preview window. Useful for environments without a display.
+- `--ar`: Overlay a 3D cube on top of the marker to demonstrate Augmented Reality pose estimation.
 
 ### 3. Detect ArUco Markers using a Webcam
 
@@ -48,5 +49,6 @@ python aruco_tool.py detect-webcam
 
 Options:
 - `--camera`: The index of the camera to use (default: 0).
+- `--ar`: Overlay a 3D cube on top of the marker in real-time.
 
 Press `q` to exit the webcam stream.
