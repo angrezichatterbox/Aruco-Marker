@@ -23,38 +23,71 @@ def generate_marker(marker_id, size=200, output_path="marker.png", dict_type=aru
     # Save the marker
     cv2.imwrite(output_path, marker_image)
     print(f"Marker ID {marker_id} generated and saved to {output_path}")
+import numpy as np
+import cv2
 
-def draw_cube(image, rvec, tvec, camera_matrix, dist_coeffs, marker_length):
+def draw_cube(image, rvec, tvec, camera_matrix, dist_coeffs, marker_length, z_offset=0.015):
     """
-    Draw a 3D cube on top of an ArUco marker.
+    Draw a solid 3D cube with a Z-axis offset.
+    Uses painter's algorithm to sort faces by depth (farthest drawn first).
     """
     half_l = marker_length / 2.0
-    # Define the 3D coordinates of the cube vertices
-    # Marker is in the XY plane (Z=0), cube extends in positive Z direction
+
     axis = np.float32([
-        [-half_l,  half_l, 0],
-        [ half_l,  half_l, 0],
-        [ half_l, -half_l, 0],
-        [-half_l, -half_l, 0],
-        [-half_l,  half_l, marker_length],
-        [ half_l,  half_l, marker_length],
-        [ half_l, -half_l, marker_length],
-        [-half_l, -half_l, marker_length]
+        [-half_l,  half_l, z_offset],
+        [ half_l,  half_l, z_offset],
+        [ half_l, -half_l, z_offset],
+        [-half_l, -half_l, z_offset],
+        [-half_l,  half_l, z_offset + marker_length],
+        [ half_l,  half_l, z_offset + marker_length],
+        [ half_l, -half_l, z_offset + marker_length],
+        [-half_l, -half_l, z_offset + marker_length]
     ])
 
-    # Project the 3D points to 2D image plane
     imgpts, _ = cv2.projectPoints(axis, rvec, tvec, camera_matrix, dist_coeffs)
     imgpts = np.int32(imgpts).reshape(-1, 2)
 
-    # Draw the base (green)
-    cv2.drawContours(image, [imgpts[:4]], -1, (0, 255, 0), 3)
-    
-    # Draw the pillars (blue)
-    for i, j in zip(range(4), range(4, 8)):
-        cv2.line(image, tuple(imgpts[i]), tuple(imgpts[j]), (255, 0, 0), 3)
-        
-    # Draw the top (red)
-    cv2.drawContours(image, [imgpts[4:]], -1, (0, 0, 255), 3)
+    # Rotate the 3D points into camera space to get real depth
+    R, _ = cv2.Rodrigues(rvec)
+    pts_cam = (R @ axis.T).T + tvec.flatten()  # shape (8, 3)
+
+    face_indices = [
+        [0, 1, 2, 3],  # Bottom
+        [0, 1, 5, 4],  # Side 1
+        [1, 2, 6, 5],  # Side 2
+        [2, 3, 7, 6],  # Side 3
+        [3, 0, 4, 7],  # Side 4
+        [4, 5, 6, 7],  # Top
+    ]
+
+    colors = [
+        (80,  80,  80),   # Bottom  — Shadow Gray
+        (50,  50,  220),  # Side 1  — Blue
+        (50,  220, 50),   # Side 2  — Green
+        (20,  20,  150),  # Side 3  — Dark Blue
+        (20,  150, 20),   # Side 4  — Dark Green
+        (255, 150, 50),   # Top     — Orange
+    ]
+
+    # Compute each face's average Z depth in camera space
+    face_depths = []
+    for i, fi in enumerate(face_indices):
+        avg_z = np.mean([pts_cam[j][2] for j in fi])
+        face_depths.append((avg_z, i))
+
+    # Sort farthest → nearest (painter's algorithm)
+    face_depths.sort(key=lambda x: -x[0])
+
+    # Draw faces back-to-front
+    for avg_z, i in face_depths:
+        fi = face_indices[i]
+        face_array = np.array([imgpts[j] for j in fi], dtype=np.int32)
+        cv2.fillPoly(image, [face_array], colors[i])
+
+    # Draw outlines on top of all filled faces
+    for i, fi in enumerate(face_indices):
+        face_array = np.array([imgpts[j] for j in fi], dtype=np.int32)
+        cv2.polylines(image, [face_array], True, (0, 0, 0), 2)
 
     return image
 
